@@ -48,7 +48,7 @@ ok($a eq "Ich spiele die Playlist sommer hits im Esszimmer" && $c =~ /playPlayli
 ($a, $c) = say("spiel musik");
 ok($a eq "Ich spiele den Spotify DJ im Esszimmer" && $c =~ /\+8s set d_spotify_dj on$/, "Musik allein -> DJ");
 ($a, $c) = say("spiel nirvana im bad");
-ok($a eq "Ich spiele Musik von nirvana im Badezimmer" && $c eq "+8s set rem_spotify playArtistByName nirvana", "Bad ohne Zone -> $a | $c");
+ok($a eq "Ich spiele Musik von nirvana im Badezimmer" && $c eq "set rem_spotify playArtistByName nirvana", "Bad ohne Zone (sofort, v0.2.0) -> $a | $c");
 ($a, $c) = say("spiel musik von roxette");
 ok($c =~ /channel 8$/, "'musik von roxette' = Favorit genau gleich");
 ($a, $c) = say("spiel musik von enyaa");

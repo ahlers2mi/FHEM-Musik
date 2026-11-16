@@ -16,7 +16,9 @@
 #   * Spotify, wenn kein Favorit passt: "das Lied X von Y" -> playTrackByName,
 #     "Playlist X" -> playPlaylistByName, "Musik" allein -> Spotify DJ,
 #     sonst Interpret -> playArtistByName.
-#   * Vor dem Abspielen: Zone an, Eingang OnlineMusic.
+#   * Vor dem Abspielen: Zone an, Eingang OnlineMusic. Gewartet wird nur,
+#     wenn die Zone aus war (musikSpotifyDelay) bzw. erst umgeschaltet wird
+#     (musikInputDelay); läuft sie schon auf OnlineMusic, startet Spotify sofort.
 #   * Antwort als Text für talk/Alexa ("WDR2 läuft im Esszimmer").
 #
 # Aufruf aus Talk2Fhem: answer=>'Musik_Talk("<name>","$0")'.
@@ -27,7 +29,7 @@
 # keine eigene Hardware.
 #
 # Autor:    ahlers2mi
-# Version:  v0.1.0
+# Version:  v0.2.0
 # Lizenz:   GPL v2 oder höher (wie FHEM)
 ##############################################################################
 
@@ -38,7 +40,7 @@ use warnings;
 
 use vars qw(%defs %attr $init_done $readingFnAttributes);
 
-my $MUSIK_VERSION = "v0.1.0";
+my $MUSIK_VERSION = "v0.2.0";
 
 # Zahlwörter, die Alexa bei Sendernamen ausschreibt
 my %MUSIK_NUM = (null => 0, eins => 1, zwei => 2, zwo => 2, drei => 3,
@@ -74,6 +76,7 @@ sub Musik_Initialize {
                       . "musikSpotify "
                       . "musikSpotifyDJ "
                       . "musikSpotifyDelay "
+                      . "musikInputDelay "
                       . "musikEchoDevice "
                       . "musikEchoMaxAge "
                       . "musikVolumeStep "
@@ -368,10 +371,41 @@ sub Musik_Later {
 ##############################################################################
 sub Musik_ZoneOn {
     my ($hash, $r) = @_;
-    return if (!$r->{zone});
-    Musik_Do($hash, "set $r->{zone} on");
-    Musik_Do($hash, "set $r->{zone} input OnlineMusic");
-    return;
+    return 0 if (!$r->{zone});
+    my $name = $hash->{NAME};
+    my $z = $r->{zone};
+    my $isOn = Musik_ZoneIsOn($z);
+    my $inOk = (ReadingsVal($z, "input", "") eq "OnlineMusic");
+    Musik_Do($hash, "set $z on") if (!$isOn);
+    Musik_Do($hash, "set $z input OnlineMusic") if (!$isOn || !$inOk);
+    return AttrVal($name, "musikSpotifyDelay", 8) if (!$isOn);
+    return AttrVal($name, "musikInputDelay", 2)   if (!$inOk);
+    return 0;
+}
+
+##############################################################################
+# Musik_ZoneIsOn
+#   Läuft die Zone? Hauptzone (DENON_AVR): power und zoneMain on,
+#   Nebenzone: power on (sonst state).
+##############################################################################
+sub Musik_ZoneIsOn {
+    my ($z) = @_;
+    my $type = $defs{$z} ? ($defs{$z}{TYPE} // "") : "";
+    my $pw = ReadingsVal($z, "power", ReadingsVal($z, "state", "off"));
+    return 0 if ($pw ne "on");
+    return 0 if ($type eq "DENON_AVR" && ReadingsVal($z, "zoneMain", "on") ne "on");
+    return 1;
+}
+
+##############################################################################
+# Musik_RoomsOn
+#   Alle Zonen der Räume einschalten, längste nötige Wartezeit zurückgeben.
+##############################################################################
+sub Musik_RoomsOn {
+    my ($hash, @rooms) = @_;
+    my $d = 0;
+    foreach my $r (@rooms) { my $x = Musik_ZoneOn($hash, $r); $d = $x if ($x > $d); }
+    return $d;
 }
 
 sub Musik_ZoneOff {
@@ -411,13 +445,12 @@ sub Musik_Volume {
 
 ##############################################################################
 # Musik_SpotifyPlay
-#   Spotify-Befehl nach musikSpotifyDelay s (die Zone muss erst anlaufen).
+#   Spotify-Befehl, ggf. verzögert (die Zone muss erst anlaufen).
 ##############################################################################
 sub Musik_SpotifyPlay {
-    my ($hash, $cmd) = @_;
-    my $name = $hash->{NAME};
-    my $sp = AttrVal($name, "musikSpotify", "rem_spotify");
-    Musik_Do($hash, "set $sp $cmd", AttrVal($name, "musikSpotifyDelay", 8));
+    my ($hash, $cmd, $delay) = @_;
+    my $sp = AttrVal($hash->{NAME}, "musikSpotify", "rem_spotify");
+    Musik_Do($hash, "set $sp $cmd", $delay);
     return;
 }
 
@@ -528,23 +561,22 @@ sub Musik_Decide {
     $q =~ s/^(?:spiel\S*|mach\S*|start\S*|stell\S*|leg\S*|ich (?:will|möchte|moechte)(?:\s+\S+)?\s+hören)\s+//;
     $q =~ s/^(?:spiel\S*|mach\S*|start\S*|stell\S*|leg\S*)$//;
     $q =~ s/^\s+|\s+$//g;
-    my $delay = AttrVal($name, "musikSpotifyDelay", 8);
 
     if ($q =~ /^(?:das |den |ein )?(?:lied|song|titel)\s+(.+?)(?:\s+von\s+(.+))?$/) {
         my ($title, $artist) = ($1, $2);
-        Musik_ZoneOn($hash, $_) foreach (@rooms);
-        Musik_SpotifyPlay($hash, "playTrackByName $title" . ($artist ? " $artist" : ""));
+        my $d = Musik_RoomsOn($hash, @rooms);
+        Musik_SpotifyPlay($hash, "playTrackByName $title" . ($artist ? " $artist" : ""), $d);
         return ("Ich spiele $title" . ($artist ? " von $artist" : "") . " $im", "lied $title", $rn);
     }
     if ($q =~ /^(?:die |meine )?(?:playlist|wiedergabeliste)\s+(.+)$/) {
         my $pl = $1;
-        Musik_ZoneOn($hash, $_) foreach (@rooms);
-        Musik_SpotifyPlay($hash, "playPlaylistByName $pl");
+        my $d = Musik_RoomsOn($hash, @rooms);
+        Musik_SpotifyPlay($hash, "playPlaylistByName $pl", $d);
         return ("Ich spiele die Playlist $pl $im", "playlist $pl", $rn);
     }
     if ($q =~ /^(?:(?:die |etwas |irgendwas |den )?(?:musik|lieder|radio|dj|spotify dj|spotify))?$/) {
-        Musik_ZoneOn($hash, $_) foreach (@rooms);
-        Musik_Do($hash, "set " . AttrVal($name, "musikSpotifyDJ", "d_spotify_dj") . " on", $delay);
+        my $d = Musik_RoomsOn($hash, @rooms);
+        Musik_Do($hash, "set " . AttrVal($name, "musikSpotifyDJ", "d_spotify_dj") . " on", $d);
         return ("Ich spiele den Spotify DJ $im", "dj", $rn);
     }
 
@@ -567,8 +599,8 @@ sub Musik_Decide {
     my $artist = $q;
     $artist =~ s/^(?:musik|radio|sender)\s+//;
     return ("Was soll ich spielen?", "unklar", $rn) if ($artist eq "");
-    Musik_ZoneOn($hash, $_) foreach (@rooms);
-    Musik_SpotifyPlay($hash, "playArtistByName $artist");
+    my $d = Musik_RoomsOn($hash, @rooms);
+    Musik_SpotifyPlay($hash, "playArtistByName $artist", $d);
     return ("Ich spiele Musik von $artist $im", "interpret $artist", $rn);
 }
 
@@ -639,7 +671,10 @@ sub Musik_Decide {
     <li><a id="Musik-attr-musikSpotifyDJ"></a><code>musikSpotifyDJ</code> – Schalter für den
       Spotify DJ (Standard d_spotify_dj, wird mit <code>on</code> gesetzt).</li>
     <li><a id="Musik-attr-musikSpotifyDelay"></a><code>musikSpotifyDelay</code> – Sekunden
-      zwischen Zone an und Spotify-Start (Standard 8).</li>
+      zwischen Zone an und Spotify-Start, nur wenn die Zone aus war (Standard 8).</li>
+    <li><a id="Musik-attr-musikInputDelay"></a><code>musikInputDelay</code> – Sekunden
+      Wartezeit, wenn die Zone an ist, aber erst auf OnlineMusic umgeschaltet wird
+      (Standard 2). Läuft sie schon auf OnlineMusic, startet Spotify sofort.</li>
     <li><a id="Musik-attr-musikEchoDevice"></a><code>musikEchoDevice</code> – Gerät mit
       Reading echoId und Attribut echoRooms (Standard MyAlexa).</li>
     <li><a id="Musik-attr-musikEchoMaxAge"></a><code>musikEchoMaxAge</code> – höchstes Alter

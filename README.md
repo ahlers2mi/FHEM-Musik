@@ -13,7 +13,7 @@ und Lautstärke an einer Stelle statt in vielen einzelnen Talk-Regeln.
 | „spiel Radio Bob“ | Nachfrage: „Meinst du RADIO BOB - NRW oder RADIO BOB 70er Rock?“ |
 | „spiel das Lied Smells like teen spirit von Nirvana“ | Spotify `playTrackByName` |
 | „spiel die Playlist Sommerhits“ | Spotify `playPlaylistByName` |
-| „spiel Musik“ | Spotify DJ |
+| „spiel Musik“ | Spotify DJ (wartet nur, wenn die Zone erst eingeschaltet wird) |
 | „spiel Musik von Amy Macdonald im Wohnzimmer“ / „spiel Nirvana“ | Spotify `playArtistByName` |
 | „Musik an“ / „Musik aus“ | Zone an (OnlineMusic) / ohne Raum überall aus |
 | „stop“, „Pause“, „weiter“, „nächstes Lied“ | HEOS-Player des Raums |
